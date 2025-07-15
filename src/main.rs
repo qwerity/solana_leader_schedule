@@ -31,6 +31,10 @@ struct Args {
     /// Epoch number (if not specified, uses current epoch)
     #[arg(short, long)]
     epoch: Option<u64>,
+
+    /// Show all slots (including past ones). Default: show only upcoming slots
+    #[arg(long)]
+    all: bool,
 }
 
 /// Represents a leader slot with its timing information
@@ -241,9 +245,50 @@ async fn main() -> Result<()> {
                 // Sort by slot number for better readability
                 table_data.sort_by_key(|entry| entry.slot);
 
-                                // Create table and display with custom header that includes current time
+                // Filter slots based on --all flag (show only upcoming slots by default)
+                let filtered_data = if args.all {
+                    table_data
+                } else {
+                    table_data.into_iter()
+                        .filter(|slot| {
+                            let slot_time = slot_to_timestamp_local(
+                                slot.slot,
+                                SLOTS_PER_SECOND,
+                                current_slot,
+                                current_timestamp
+                            );
+                            slot_time.timestamp() > current_timestamp
+                        })
+                        .collect()
+                };
+
+                if filtered_data.is_empty() {
+                    if args.all {
+                        println!(
+                            "ℹ️  No leader slots found for validator {} in epoch {}",
+                            identity, target_epoch
+                        );
+                    } else {
+                        println!(
+                            "ℹ️  No upcoming leader slots found for validator {} in epoch {} (use --all to see past slots)",
+                            identity, target_epoch
+                        );
+                    }
+                    return Ok(());
+                }
+
+                let slot_type = if args.all { "leader" } else { "upcoming leader" };
+                println!(
+                    "✅ Found {} {} slots for validator {} in epoch {}",
+                    filtered_data.len(),
+                    slot_type,
+                    identity,
+                    target_epoch
+                );
+
+                // Create table and display with custom header that includes current time
                 let current_time_formatted = Local::now().format("%H:%M").to_string();
-                let table = Table::new(&table_data);
+                let table = Table::new(&filtered_data);
                 let table_string = table.to_string();
 
                 // Replace the "Time Diff" header with the version that includes current time
@@ -252,7 +297,7 @@ async fn main() -> Result<()> {
                 // Display the results in a formatted table
                 println!("\n{}", custom_table);
 
-                println!("\n📊 Total leader slots: {}", slots.len());
+                println!("\n📊 Total {} slots: {}", slot_type, filtered_data.len());
             } else {
                 println!(
                     "ℹ️  Validator {} is not scheduled to be a leader in epoch {}",
